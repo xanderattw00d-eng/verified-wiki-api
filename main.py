@@ -22,10 +22,10 @@ async def x402_payment_middleware(request: Request, call_next):
     if request.url.path in ["/", "/docs", "/openapi.json"]:
         return await call_next(request)
     
-    # Check for x402 payment authorization header (e.g., Lightning / x402 token)
+    # Check for x402 payment authorization header
     payment_header = request.headers.get("X-402-Payment")
     
-    # For testing / AI agent handshake: if no payment header is provided, return 402
+    # If no payment header is provided, return 402 with your Alby Lightning address
     if not payment_header:
         return JSONResponse(
             status_code=402,
@@ -33,12 +33,11 @@ async def x402_payment_middleware(request: Request, call_next):
                 "error": "Payment Required",
                 "protocol": "x402",
                 "message": "Access to this verified hardware data source requires an x402 micropayment.",
-                "pay_to": "lightning:xander_hardware_fund@getalby.com",
+                "pay_to": "lightning:resonancehumble357936@getalby.com",
                 "cost_sats": 1
             }
         )
     
-    # TODO: Validate cryptographic proof of payment from the x402 provider here
     response = await call_next(request)
     return response
 
