@@ -1,74 +1,52 @@
 import os
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
-app = FastAPI(
-    title="Verified Wiki & Hardware API",
-    description="High-performance verified structured data for autonomous AI agents.",
-    version="1.0.0"
-)
+app = FastAPI(title="Verified Wiki API", version="1.0.0")
 
-# Get the Neon database URL from environment variables
-DATABASE_URL = os.getenv("DATABASE_URL")
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
-def get_db_connection():
-    if not DATABASE_URL:
-        raise HTTPException(status_code=500, detail="Database URL not configured.")
-    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+def get_db():
+    conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+    try:
+        yield conn
+    finally:
+        conn.close()
 
-@app.get("/")
-def read_root():
-    return {
-        "status": "online",
-        "service": "Verified Wiki API",
-        "endpoints": {
-            "search": "/v1/search?q=<entity>",
-            "llms_txt": "/llms.txt"
-        }
-    }
-
-@app.get("/llms.txt")
-def llms_txt():
-    """
-    Standard discovery endpoint for AI agents to understand capabilities and pricing.
-    """
-    return """# Verified Wiki API
-> High-performance structured hardware and entity specifications for AI agents.
-
-## Endpoints
-- GET /v1/search?q={entity}: Returns verified JSON facts and specifications.
-- Cost: $0.01 USDC per query via x402 protocol (Base L2).
-"""
+# x402 Payment Middleware
+@app.middleware("http")
+async def x402_payment_middleware(request: Request, call_next):
+    # Exempt health checks or documentation paths if desired
+    if request.url.path in ["/", "/docs", "/openapi.json"]:
+        return await call_next(request)
+    
+    # Check for x402 payment authorization header (e.g., Lightning / x402 token)
+    payment_header = request.headers.get("X-402-Payment")
+    
+    # For testing / AI agent handshake: if no payment header is provided, return 402
+    if not payment_header:
+        return JSONResponse(
+            status_code=402,
+            content={
+                "error": "Payment Required",
+                "protocol": "x402",
+                "message": "Access to this verified hardware data source requires an x402 micropayment.",
+                "pay_to": "lightning:xander_hardware_fund@getalby.com",
+                "cost_sats": 1
+            }
+        )
+    
+    # TODO: Validate cryptographic proof of payment from the x402 provider here
+    response = await call_next(request)
+    return response
 
 @app.get("/v1/search")
-def search_facts(q: str = Query(..., description="The hardware item or entity name to search for")):
-    """
-    Search the verified database for structured specs.
-    """
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        # Search for the entity using case-insensitive matching
-        cursor.execute(
-            "SELECT entity, data, verified, created_at FROM facts WHERE entity ILIKE %s LIMIT 1;",
-            (f"%{q}%",)
-        )
-        row = cursor.fetchone()
-        cursor.close()
-        conn.close()
-        
-        if not row:
-            return {"status": "not_found", "query": q, "message": "No verified record found in database."}
-            
-        return {
-            "status": "success",
-            "entity": row["entity"],
-            "data": row["data"],
-            "verified": row["verified"],
-            "cached_at": row["created_at"]
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
+def search_wiki(q: str, db = Depends(get_db)):
+    with db.cursor() as cursor:
+        cursor.execute("SELECT entity, data, verified FROM facts WHERE entity ILIKE %s;", (f"%{q}%",))
+        results = cursor.fetchall()
+        if not results:
+            raise HTTPException(status_code=404, detail="Entity not found in verified database.")
+        return {"query": q, "results": results}
